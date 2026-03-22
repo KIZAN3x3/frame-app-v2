@@ -1345,23 +1345,25 @@ document.getElementById('trimIn').addEventListener('change',function(e){
 document.getElementById('trimSeek').addEventListener('input',function(){
   trimVid.currentTime=parseFloat(this.value);
 });
+
+// timeupdate は1つに統合（2つあると競合する）
 trimVid.addEventListener('timeupdate',function(){
   document.getElementById('trimSeek').value=trimVid.currentTime;
   document.getElementById('trimCurrentTime').textContent=fmtTime(trimVid.currentTime);
+  // 終了点で自動停止
+  if(!trimVid.paused&&trimVid.currentTime>=trimEnd){
+    trimVid.pause();
+    document.getElementById('trimPlayBtn').textContent='▶ 再生';
+  }
 });
 
 // 再生/一時停止
 document.getElementById('trimPlayBtn').onclick=function(){
   if(trimVid.paused){
-    // 範囲外なら開始点へ
     if(trimVid.currentTime<trimStart||trimVid.currentTime>=trimEnd) trimVid.currentTime=trimStart;
     trimVid.play();this.textContent='⏸ 一時停止';
   }else{trimVid.pause();this.textContent='▶ 再生';}
 };
-// 終了点で自動停止
-trimVid.addEventListener('timeupdate',function(){
-  if(trimVid.currentTime>=trimEnd){trimVid.pause();document.getElementById('trimPlayBtn').textContent='▶ 再生';}
-});
 // ミュート
 document.getElementById('trimMuteBtn').onclick=function(){
   trimVid.muted=!trimVid.muted;
@@ -1383,7 +1385,7 @@ document.getElementById('trimEndSlider').addEventListener('input',function(){
   updateTrimRange();
 });
 
-// 「ここから」ボタン
+// 「ここから」ボタン：現在の再生位置を開始点にセット
 document.getElementById('trimSetStart').onclick=function(){
   trimStart=trimVid.currentTime;
   if(trimStart>=trimEnd) trimEnd=Math.min(trimStart+1,trimDur);
@@ -1391,7 +1393,7 @@ document.getElementById('trimSetStart').onclick=function(){
   document.getElementById('trimEndSlider').value=trimEnd;
   updateTrimRange();
 };
-// 「ここまで」ボタン
+// 「ここまで」ボタン：現在の再生位置を終了点にセット
 document.getElementById('trimSetEnd').onclick=function(){
   trimEnd=trimVid.currentTime;
   if(trimEnd<=trimStart) trimStart=Math.max(trimEnd-1,0);
@@ -1408,16 +1410,20 @@ document.getElementById('trimExecBtn').onclick=async function(){
   document.getElementById('trimExecBtn').disabled=true;
 
   var tc=document.createElement('canvas');
-  tc.width=trimVid.videoWidth;tc.height=trimVid.videoHeight;
+  tc.width=trimVid.videoWidth||640;tc.height=trimVid.videoHeight||360;
   var tctx=tc.getContext('2d');
-
   var trimStream=tc.captureStream(30);
-  // 音声
-  var aCtx=new (window.AudioContext||window.webkitAudioContext)();
-  var src=aCtx.createMediaElementSource(trimVid);
-  var dest=aCtx.createMediaStreamDestination();
-  src.connect(dest);src.connect(aCtx.destination);
-  dest.stream.getAudioTracks().forEach(function(t){trimStream.addTrack(t);});
+
+  // 音声: ユーザー操作内（onclick）でAudioContextを作成してAndroid対応
+  var aCtx=null;
+  try{
+    aCtx=new (window.AudioContext||window.webkitAudioContext)();
+    aCtx.resume(); // Androidの自動再生ポリシー対策
+    var src=aCtx.createMediaElementSource(trimVid);
+    var dest=aCtx.createMediaStreamDestination();
+    src.connect(dest);src.connect(aCtx.destination);
+    dest.stream.getAudioTracks().forEach(function(t){trimStream.addTrack(t);});
+  }catch(e){/* 音声なしで続行 */}
 
   var mimeType='video/webm;codecs=vp9';
   if(!MediaRecorder.isTypeSupported(mimeType))mimeType='video/webm;codecs=vp8';
@@ -1425,20 +1431,22 @@ document.getElementById('trimExecBtn').onclick=async function(){
 
   var chunks=[];
   var rec=new MediaRecorder(trimStream,{mimeType:mimeType});
-  rec.ondataavailable=function(e){if(e.data.size>0)chunks.push(e.data);};
+  rec.ondataavailable=function(e){if(e.data&&e.data.size>0)chunks.push(e.data);};
   rec.onstop=function(){
     var blob=new Blob(chunks,{type:mimeType});
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
     a.download='trimmed_'+Date.now()+'.webm';
     a.href=url;a.click();
-    setSt('trimStbox','トリミング完了！ダウンロードしました','done');
+    setSt('trimStbox','トリミング完了！','done');
     document.getElementById('trimExecBtn').disabled=false;
-    aCtx.close();
+    if(aCtx)aCtx.close();
   };
 
+  // シーク→再生→録画
+  trimVid.muted=true; // 録音はAudioContext経由なのでvideoはmuted
   trimVid.currentTime=trimStart;
-  await new Promise(function(r){trimVid.onseeked=r;});
+  await new Promise(function(r){trimVid.onseeked=function(){trimVid.onseeked=null;r();};});
   trimVid.play();
   rec.start(100);
 
