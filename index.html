@@ -75,7 +75,7 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
 /* カメラモード専用 */
 .cam-note{font-size:11px;color:var(--text2);line-height:1.7;padding:10px 0 6px;}
 </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.6/ffmpeg.min.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -1308,51 +1308,50 @@ var cLastBlob=null; // カメラ録画の最新blob
 async function loadFFmpeg(){
   if(ffmpegLoaded) return true;
   try{
-    // CDN版のAPIに対応
-    if(typeof FFmpegWASM!=='undefined'){
-      var {FFmpeg}=FFmpegWASM;
-      ffmpegInstance=new FFmpeg();
-      await ffmpegInstance.load();
-    }else if(typeof createFFmpeg!=='undefined'){
-      ffmpegInstance=createFFmpeg({log:false});
-      await ffmpegInstance.load();
-    }else{
-      return false;
-    }
+    if(typeof createFFmpeg==='undefined') return false;
+    ffmpegInstance=createFFmpeg({
+      log:false,
+      corePath:'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+    });
+    await ffmpegInstance.load();
     ffmpegLoaded=true;
     return true;
-  }catch(e){return false;}
+  }catch(e){
+    console.error('FFmpeg load error:',e);
+    return false;
+  }
 }
 
 async function convertToMp4(blob, stboxId, filename){
   setSt(stboxId,'FFmpegを読み込み中...（初回30秒ほどかかる場合があります）','loading');
   var ok=await loadFFmpeg();
   if(!ok){
-    setSt(stboxId,'変換に失敗しました。別のブラウザで試してください','err');
+    setSt(stboxId,'変換に失敗しました。PC版Chromeで試してください','err');
     return;
   }
   try{
     setSt(stboxId,'変換中...しばらくお待ちください','loading');
     var ab=await blob.arrayBuffer();
-    if(ffmpegInstance.writeFile){
-      // 新しいAPI (v0.12+)
-      await ffmpegInstance.writeFile('input.webm',new Uint8Array(ab));
-      await ffmpegInstance.exec(['-i','input.webm','-c:v','libx264','-c:a','aac','-movflags','faststart','output.mp4']);
-      var data=await ffmpegInstance.readFile('output.mp4');
-      var mp4Blob=new Blob([data.buffer],{type:'video/mp4'});
-    }else{
-      // 古いAPI (v0.11以前)
-      ffmpegInstance.FS('writeFile','input.webm',new Uint8Array(ab));
-      await ffmpegInstance.run('-i','input.webm','-c:v','libx264','-c:a','aac','-movflags','faststart','output.mp4');
-      var data=ffmpegInstance.FS('readFile','output.mp4');
-      var mp4Blob=new Blob([data.buffer],{type:'video/mp4'});
-    }
+    ffmpegInstance.FS('writeFile','input.webm',new Uint8Array(ab));
+    await ffmpegInstance.run(
+      '-i','input.webm',
+      '-c:v','libx264',
+      '-preset','ultrafast',
+      '-c:a','aac',
+      '-movflags','faststart',
+      'output.mp4'
+    );
+    var data=ffmpegInstance.FS('readFile','output.mp4');
+    var mp4Blob=new Blob([data.buffer],{type:'video/mp4'});
     var url=URL.createObjectURL(mp4Blob);
     var a=document.createElement('a');
     a.download=filename+'_'+Date.now()+'.mp4';
     a.href=url;a.click();
     setSt(stboxId,'MP4変換完了！','done');
+    // メモリ解放
+    try{ffmpegInstance.FS('unlink','input.webm');ffmpegInstance.FS('unlink','output.mp4');}catch(e){}
   }catch(e){
+    console.error('FFmpeg convert error:',e);
     setSt(stboxId,'変換失敗：メモリ不足の可能性があります','err');
   }
 }
