@@ -75,6 +75,7 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
 /* カメラモード専用 */
 .cam-note{font-size:11px;color:var(--text2);line-height:1.7;padding:10px 0 6px;}
 </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.6/ffmpeg.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -308,6 +309,8 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
             <div class="stbox" id="vTrimStbox"></div>
           </div>
           <button class="dlbtn" id="vDlBtn" style="margin-top:10px;">⬇ 動画をダウンロード（WebM）</button>
+          <button class="dlbtn" id="vMp4Btn" style="border-color:var(--green);color:var(--green);margin-top:8px;">🎬 MP4に変換してDL（インスタ・X対応）</button>
+          <div class="stbox" id="vMp4Stbox"></div>
           <button class="rtbtn" id="vRtBtn">↩ やり直す</button>
         </div>
       </div>
@@ -421,6 +424,8 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
         <div class="cb">
           <canvas id="cSnapCanvas" class="preview-canvas hidden"></canvas>
           <button class="dlbtn" id="cVideoDlBtn" style="margin-top:0">⬇ 動画をダウンロード（WebM）</button>
+          <button class="dlbtn" id="cMp4Btn" style="border-color:var(--green);color:var(--green);margin-top:8px;">🎬 MP4に変換してDL（インスタ・X対応）</button>
+          <div class="stbox" id="cMp4Stbox"></div>
           <button class="dlbtn" id="cSnapBtn" style="border-color:var(--green);color:var(--green);margin-top:8px">📸 静止画として保存（PNG・枠あり）</button>
           <button class="dlbtn" id="cVideoNoFrameBtn" style="border-color:var(--text2);color:var(--text2);margin-top:8px">🎬 動画をダウンロード（WebM・枠なし）</button>
           <button class="rtbtn" id="cRtBtn">↩ カメラに戻る</button>
@@ -1212,6 +1217,7 @@ document.getElementById('cRecBtn').onclick=function(){
   cMediaRec.ondataavailable=function(e){if(e.data&&e.data.size>0)cRecChunks.push(e.data);};
   cMediaRec.onstop=function(){
     var blob=new Blob(cRecChunks,{type:mimeType});
+    cLastBlob=blob; // MP4変換用に保存
     var url=URL.createObjectURL(blob);
     document.getElementById('cVideoDlBtn').onclick=function(){
       var a=document.createElement('a');a.download='cam_frame_'+Date.now()+'.webm';a.href=url;a.click();
@@ -1293,6 +1299,73 @@ function showPresetToast(msg){
 }
 
 
+
+// ===== FFmpeg.wasm WebM→MP4変換 =====
+var ffmpegLoaded=false;
+var ffmpegInstance=null;
+var cLastBlob=null; // カメラ録画の最新blob
+
+async function loadFFmpeg(){
+  if(ffmpegLoaded) return true;
+  try{
+    // CDN版のAPIに対応
+    if(typeof FFmpegWASM!=='undefined'){
+      var {FFmpeg}=FFmpegWASM;
+      ffmpegInstance=new FFmpeg();
+      await ffmpegInstance.load();
+    }else if(typeof createFFmpeg!=='undefined'){
+      ffmpegInstance=createFFmpeg({log:false});
+      await ffmpegInstance.load();
+    }else{
+      return false;
+    }
+    ffmpegLoaded=true;
+    return true;
+  }catch(e){return false;}
+}
+
+async function convertToMp4(blob, stboxId, filename){
+  setSt(stboxId,'FFmpegを読み込み中...（初回30秒ほどかかる場合があります）','loading');
+  var ok=await loadFFmpeg();
+  if(!ok){
+    setSt(stboxId,'変換に失敗しました。別のブラウザで試してください','err');
+    return;
+  }
+  try{
+    setSt(stboxId,'変換中...しばらくお待ちください','loading');
+    var ab=await blob.arrayBuffer();
+    if(ffmpegInstance.writeFile){
+      // 新しいAPI (v0.12+)
+      await ffmpegInstance.writeFile('input.webm',new Uint8Array(ab));
+      await ffmpegInstance.exec(['-i','input.webm','-c:v','libx264','-c:a','aac','-movflags','faststart','output.mp4']);
+      var data=await ffmpegInstance.readFile('output.mp4');
+      var mp4Blob=new Blob([data.buffer],{type:'video/mp4'});
+    }else{
+      // 古いAPI (v0.11以前)
+      ffmpegInstance.FS('writeFile','input.webm',new Uint8Array(ab));
+      await ffmpegInstance.run('-i','input.webm','-c:v','libx264','-c:a','aac','-movflags','faststart','output.mp4');
+      var data=ffmpegInstance.FS('readFile','output.mp4');
+      var mp4Blob=new Blob([data.buffer],{type:'video/mp4'});
+    }
+    var url=URL.createObjectURL(mp4Blob);
+    var a=document.createElement('a');
+    a.download=filename+'_'+Date.now()+'.mp4';
+    a.href=url;a.click();
+    setSt(stboxId,'MP4変換完了！','done');
+  }catch(e){
+    setSt(stboxId,'変換失敗：メモリ不足の可能性があります','err');
+  }
+}
+
+document.getElementById('vMp4Btn').onclick=async function(){
+  if(!vTrimBlob){setSt('vMp4Stbox','先に動画を合成してください','err');return;}
+  await convertToMp4(vTrimBlob,'vMp4Stbox','frame_video');
+};
+
+document.getElementById('cMp4Btn').onclick=async function(){
+  if(!cLastBlob){setSt('cMp4Stbox','先に録画してください','err');return;}
+  await convertToMp4(cLastBlob,'cMp4Stbox','cam_frame');
+};
 
 var camHistoryCount=0;
 function addCamHistory(blob, thumbDataUrl){
