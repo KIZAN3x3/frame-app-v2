@@ -177,6 +177,20 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
             </div>
           </div>
           <p class="hint" id="adjHint">📱 1本指ドラッグで移動 / 2本指ピンチで拡縮<br>💻 ドラッグで移動 / スクロールでズーム</p>
+          <!-- 明るさ・コントラスト調整 -->
+          <div style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:var(--rs);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <span style="font-size:11px;color:var(--text2);width:60px;">☀️ 明るさ</span>
+              <input type="range" id="brightnessSlider" min="0" max="200" value="100" step="1" style="flex:1;accent-color:var(--accent);">
+              <span style="font-size:11px;color:var(--text2);width:32px;text-align:right;" id="brightnessVal">100</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:11px;color:var(--text2);width:60px;">◑ コントラスト</span>
+              <input type="range" id="contrastSlider" min="0" max="200" value="100" step="1" style="flex:1;accent-color:var(--accent);">
+              <span style="font-size:11px;color:var(--text2);width:32px;text-align:right;" id="contrastVal">100</span>
+            </div>
+            <button class="abtn" id="filterResetBtn" style="width:100%;margin-top:8px;font-size:11px;padding:6px;">↩ フィルターリセット</button>
+          </div>
           <div class="aacts">
             <button class="abtn" id="resetBtn">↩ リセット</button>
             <button class="abtn pri" id="applyBtn">✓ これで合成する</button>
@@ -496,9 +510,35 @@ var gestureSetup=false;
 document.getElementById('pIn').onchange=async function(e){
   var f=e.target.files[0];if(!f)return;
   pImg=await loadImg(f);markZone('pArea','n1',pImg.src);checkPhotoReady();
+  // 新しい写真を選んだらフィルターリセット
+  pBrightness=100;pContrast=100;
+  document.getElementById('brightnessSlider').value=100;
+  document.getElementById('contrastSlider').value=100;
+  document.getElementById('brightnessVal').textContent='100';
+  document.getElementById('contrastVal').textContent='100';
 };
 
 function checkPhotoReady(){document.getElementById('goBtn').disabled=!(pImg&&fImg);}
+
+// 明るさ・コントラストスライダー
+document.getElementById('brightnessSlider').addEventListener('input',function(){
+  pBrightness=parseInt(this.value);
+  document.getElementById('brightnessVal').textContent=this.value;
+  if(pImg&&fImg) drawPhoto();
+});
+document.getElementById('contrastSlider').addEventListener('input',function(){
+  pContrast=parseInt(this.value);
+  document.getElementById('contrastVal').textContent=this.value;
+  if(pImg&&fImg) drawPhoto();
+});
+document.getElementById('filterResetBtn').onclick=function(){
+  pBrightness=100;pContrast=100;
+  document.getElementById('brightnessSlider').value=100;
+  document.getElementById('contrastSlider').value=100;
+  document.getElementById('brightnessVal').textContent='100';
+  document.getElementById('contrastVal').textContent='100';
+  if(pImg&&fImg) drawPhoto();
+};
 
 // 操作対象切替ボタン
 document.getElementById('adjTargetPhoto').onclick=function(){
@@ -575,18 +615,23 @@ document.getElementById('pCamShootBtn').onclick=function(){
 // スタンプの位置・サイズ管理
 var sAdj={x:0,y:0,scale:1};
 var adjTarget='photo'; // 'photo' or 'stamp'
+var pBrightness=100,pContrast=100; // 明るさ・コントラスト
 
 function drawPhoto(){
   actx.clearRect(0,0,ac.width,ac.height);
   var dw=pImg.naturalWidth*adj.scale,dh=pImg.naturalHeight*adj.scale;
+  // フィルター適用（写真のみ）
+  actx.filter='brightness('+pBrightness+'%) contrast('+pContrast+'%)';
   if(selLayer==='over'){
     actx.drawImage(fImg,0,0,ac.width,ac.height);
     actx.drawImage(pImg,adj.x,adj.y,dw,dh);
   }else{
     actx.drawImage(pImg,adj.x,adj.y,dw,dh);
+    actx.filter='none'; // 枠にはフィルターなし
     actx.drawImage(fImg,0,0,ac.width,ac.height);
   }
-  // スタンプを最前面に（位置・サイズ調整あり）
+  actx.filter='none';
+  // スタンプを最前面に（フィルターなし）
   if(sImg){
     var sw=sImg.naturalWidth*sAdj.scale,sh=sImg.naturalHeight*sAdj.scale;
     actx.drawImage(sImg,sAdj.x,sAdj.y,sw,sh);
