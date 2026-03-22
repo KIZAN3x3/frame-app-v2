@@ -363,9 +363,18 @@ progress::-webkit-progress-value{background:var(--accent);border-radius:3px;}
               <span style="font-size:11px;color:var(--text2);width:28px;text-align:right;" id="expVal">0</span>
             </div>
           </div>
+          <!-- ズームスライダー -->
+          <div id="zoomWrap" style="display:none;margin-top:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:12px;color:var(--text2);">🔍</span>
+              <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1" style="flex:1;accent-color:var(--accent);">
+              <span style="font-size:11px;color:var(--text2);width:32px;text-align:right;" id="zoomVal">×1.0</span>
+            </div>
+          </div>
           <div class="aacts" style="margin-top:10px;">
             <button class="abtn" id="cSwitchBtn">🔄 切替</button>
             <button class="abtn" id="cExpBtn">☀️ 明るさ</button>
+            <button class="abtn" id="cZoomBtn">🔍 ズーム</button>
             <button class="abtn" id="cStopBtn">⏹ 停止</button>
           </div>
           <div style="margin-top:8px;">
@@ -1431,18 +1440,26 @@ document.getElementById('trimExecBtn').onclick=async function(){
   var tc=document.createElement('canvas');
   tc.width=trimVid.videoWidth||640;tc.height=trimVid.videoHeight||360;
   var tctx=tc.getContext('2d');
-  var trimStream=tc.captureStream(30);
 
-  // 音声: ユーザー操作内（onclick）でAudioContextを作成してAndroid対応
-  var aCtx=null;
+  // 映像トラック（canvas）+ 音声トラック（videoのcaptureStream）を合成
+  var combined=new MediaStream();
+  tc.captureStream(30).getVideoTracks().forEach(function(t){combined.addTrack(t);});
   try{
-    aCtx=new (window.AudioContext||window.webkitAudioContext)();
-    aCtx.resume(); // Androidの自動再生ポリシー対策
-    var src=aCtx.createMediaElementSource(trimVid);
-    var dest=aCtx.createMediaStreamDestination();
-    src.connect(dest);src.connect(aCtx.destination);
-    dest.stream.getAudioTracks().forEach(function(t){trimStream.addTrack(t);});
-  }catch(e){/* 音声なしで続行 */}
+    // trimVid.captureStream()で音声トラックを直接取得
+    var vidStream=trimVid.captureStream();
+    vidStream.getAudioTracks().forEach(function(t){combined.addTrack(t);});
+  }catch(e){
+    // フォールバック: AudioContext経由
+    try{
+      var aCtx=new (window.AudioContext||window.webkitAudioContext)();
+      aCtx.resume();
+      var asrc=aCtx.createMediaElementSource(trimVid);
+      var adest=aCtx.createMediaStreamDestination();
+      asrc.connect(adest);asrc.connect(aCtx.destination);
+      adest.stream.getAudioTracks().forEach(function(t){combined.addTrack(t);});
+    }catch(e2){/* 音声なしで続行 */}
+  }
+  var trimStream=combined;
 
   var mimeType='video/webm;codecs=vp9';
   if(!MediaRecorder.isTypeSupported(mimeType))mimeType='video/webm;codecs=vp8';
@@ -1459,11 +1476,10 @@ document.getElementById('trimExecBtn').onclick=async function(){
     a.href=url;a.click();
     setSt('trimStbox','トリミング完了！','done');
     document.getElementById('trimExecBtn').disabled=false;
-    if(aCtx)aCtx.close();
   };
 
   // シーク→再生→録画
-  trimVid.muted=true; // 録音はAudioContext経由なのでvideoはmuted
+  trimVid.muted=false; // 音声を出力
   trimVid.currentTime=trimStart;
   await new Promise(function(r){trimVid.onseeked=function(){trimVid.onseeked=null;r();};});
   trimVid.play();
@@ -1857,8 +1873,30 @@ var _origRecTimer=setInterval;
 document.getElementById('cExpBtn').onclick=function(){
   var w=document.getElementById('expWrap');
   w.style.display=(w.style.display==='none')?'block':'none';
+  document.getElementById('zoomWrap').style.display='none';
 };
-document.getElementById('expSlider').addEventListener('input',async function(){
+document.getElementById('cZoomBtn').onclick=function(){
+  var w=document.getElementById('zoomWrap');
+  w.style.display=(w.style.display==='none')?'block':'none';
+  document.getElementById('expWrap').style.display='none';
+};
+document.getElementById('zoomSlider').addEventListener('input',function(){
+  var val=parseFloat(this.value);
+  document.getElementById('zoomVal').textContent='×'+val.toFixed(1);
+  if(!camStream)return;
+  var track=camStream.getVideoTracks()[0];
+  if(!track)return;
+  try{
+    var caps=track.getCapabilities();
+    if(caps&&caps.zoom){
+      var min=caps.zoom.min||1,max=caps.zoom.max||5;
+      var zoomVal=Math.max(min,Math.min(max,val));
+      track.applyConstraints({advanced:[{zoom:zoomVal}]});
+    }
+  }catch(e){}
+});
+
+document.getElementById('expSlider').addEventListener('input',function(){
   var val=parseFloat(this.value);
   document.getElementById('expVal').textContent=val.toFixed(1);
   if(!camStream)return;
@@ -1866,10 +1904,10 @@ document.getElementById('expSlider').addEventListener('input',async function(){
   if(!track)return;
   try{
     var caps=track.getCapabilities();
-    if(caps.exposureCompensation){
-      await track.applyConstraints({advanced:[{exposureCompensation:val}]});
-    }else if(caps.exposureMode){
-      await track.applyConstraints({advanced:[{exposureMode:'manual',exposureTime:val}]});
+    if(caps&&caps.exposureCompensation){
+      track.applyConstraints({advanced:[{exposureCompensation:val}]});
+    }else if(caps&&caps.exposureMode){
+      track.applyConstraints({advanced:[{exposureMode:'manual',exposureTime:val}]});
     }
   }catch(e){}
 });
