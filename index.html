@@ -1322,24 +1322,41 @@ function updateTrimRange(){
 document.getElementById('trimIn').addEventListener('change',function(e){
   var f=e.target.files[0];if(!f)return;
   trimFile=f;
+  if(trimVid.src) URL.revokeObjectURL(trimVid.src);
   var url=URL.createObjectURL(f);
   trimVid.src=url;
   trimVid.onloadedmetadata=function(){
-    trimDur=trimVid.duration;
-    trimStart=0;trimEnd=trimDur;
-    // スライダー設定
-    ['trimSeek','trimStartSlider','trimEndSlider'].forEach(function(id){
-      document.getElementById(id).max=trimDur;
-    });
-    document.getElementById('trimStartSlider').value=0;
-    document.getElementById('trimEndSlider').value=trimDur;
-    document.getElementById('trimDuration').textContent=fmtTime(trimDur);
-    updateTrimRange();
-    markZone('trimArea',null,null);
-    document.getElementById('trimEditSection').classList.remove('hidden');
-    window.scrollTo({top:document.getElementById('trimEditSection').offsetTop-10,behavior:'smooth'});
+    var dur=trimVid.duration;
+    // WebMはdurationがInfinityになることがある→末尾シークで実際の長さを取得
+    if(!isFinite(dur)){
+      trimVid.currentTime=1e9; // 末尾に大きな値をセット
+      trimVid.ontimeupdate=function(){
+        trimVid.ontimeupdate=null;
+        dur=trimVid.duration;
+        if(!isFinite(dur)) dur=trimVid.currentTime; // それでも無理なら現在位置を使う
+        trimVid.currentTime=0;
+        initTrimUI(dur);
+      };
+    }else{
+      initTrimUI(dur);
+    }
   };
 });
+
+function initTrimUI(dur){
+  trimDur=dur;
+  trimStart=0;trimEnd=dur;
+  ['trimSeek','trimStartSlider','trimEndSlider'].forEach(function(id){
+    document.getElementById(id).max=dur;
+  });
+  document.getElementById('trimStartSlider').value=0;
+  document.getElementById('trimEndSlider').value=dur;
+  document.getElementById('trimDuration').textContent=fmtTime(dur);
+  updateTrimRange();
+  markZone('trimArea',null,null);
+  document.getElementById('trimEditSection').classList.remove('hidden');
+  window.scrollTo({top:document.getElementById('trimEditSection').offsetTop-10,behavior:'smooth'});
+}
 
 // シークバー（現在位置）
 document.getElementById('trimSeek').addEventListener('input',function(){
@@ -1348,10 +1365,12 @@ document.getElementById('trimSeek').addEventListener('input',function(){
 
 // timeupdate は1つに統合（2つあると競合する）
 trimVid.addEventListener('timeupdate',function(){
-  document.getElementById('trimSeek').value=trimVid.currentTime;
-  document.getElementById('trimCurrentTime').textContent=fmtTime(trimVid.currentTime);
-  // 終了点で自動停止
-  if(!trimVid.paused&&trimVid.currentTime>=trimEnd){
+  if(isFinite(trimVid.currentTime)){
+    document.getElementById('trimSeek').value=trimVid.currentTime;
+    document.getElementById('trimCurrentTime').textContent=fmtTime(trimVid.currentTime);
+  }
+  // 終了点で自動停止（trimEndが有効な値の時のみ）
+  if(!trimVid.paused&&isFinite(trimEnd)&&trimEnd>0&&trimVid.currentTime>=trimEnd){
     trimVid.pause();
     document.getElementById('trimPlayBtn').textContent='▶ 再生';
   }
